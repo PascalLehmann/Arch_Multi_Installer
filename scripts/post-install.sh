@@ -1,72 +1,65 @@
 #!/bin/bash
 set -euo pipefail
+# -e: Beendet das Skript bei Fehlern
+# -u: Beendet bei Verwendung undefinierter Variablen
+# -o pipefail: Beendet bei Fehlern in einer Pipeline
 
-# 🧠 Variablen – passe sie an dein System an
-USERNAME="dein-benutzername"
-USER_HOME="/home/$USERNAME"
-DOTFILES_REPO="https://github.com/dein-benutzername/dotfiles.git"  # Optional, wenn du später eines hast
+# 📦 Lade gemeinsame Variablen und Funktionen (z. B. prepare_base, $USERNAME, $PASSWORD etc.)
+source "$(dirname "$0")/common.sh"
 
-# 📦 Paketquellen optimieren mit reflector
-echo "🔄 Aktualisiere Spiegelserver..."
-sudo pacman -Syu --noconfirm reflector
-sudo reflector --latest 20 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+# 🧱 Partitionierung, Formatierung und Mounting vorbereiten
+prepare_base
 
-# 🧙 Installiere yay als AUR-Helfer
-echo "📦 Installiere yay..."
-sudo pacman -S --needed --noconfirm base-devel git
-sudo -u "$USERNAME" bash <<EOF
-cd ~
-git clone https://aur.archlinux.org/yay.git
-cd yay
-makepkg -si --noconfirm
+# 📦 Installiere Basis- und Laptop-spezifische Pakete ins neue System (/mnt)
+pacstrap -K /mnt \
+  base                 # Minimaler Arch-Basis-Satz
+  linux                # Linux-Kernel
+  linux-firmware       # Firmware für WLAN, Bluetooth etc.
+  btrfs-progs          # Btrfs-Dateisystemtools
+  vim git              # Texteditor + Versionskontrolle
+  grub efibootmgr      # Bootloader + EFI-Tools
+  sudo                 # Adminrechte für Benutzer
+  networkmanager       # Netzwerkverwaltung
+  tlp powertop         # Stromspar-Tools für Laptops
+  acpi acpid           # ACPI-Unterstützung für Energiemanagement
+
+# 📄 Generiere fstab mit UUIDs und schreibe sie ins neue System
+genfstab -U /mnt >> /mnt/etc/fstab
+
+# 🧩 Konfiguriere das neue System im chroot
+arch-chroot /mnt /bin/bash <<EOF
+
+# 🕒 Zeitzone setzen
+ln -sf /usr/share/zoneinfo/\$TIMEZONE /etc/localtime
+hwclock --systohc  # Hardware-Uhr mit Systemzeit synchronisieren
+
+# 🌍 Locale aktivieren und generieren
+sed -i "s/^#\s*\$LOCALE/\$LOCALE/" /etc/locale.gen || echo "\$LOCALE UTF-8" >> /etc/locale.gen
+locale-gen
+echo "LANG=\$LOCALE" > /etc/locale.conf
+echo "KEYMAP=\$KEYMAP" > /etc/vconsole.conf
+
+# 🖥️ Hostname und Root-Passwort setzen
+echo "\$HOSTNAME" > /etc/hostname
+echo "root:\$PASSWORD" | chpasswd
+
+# 👤 Benutzer anlegen mit Gruppenrechten
+useradd -m -G wheel,video,input -s /bin/bash \$USERNAME
+echo "\$USERNAME:\$PASSWORD" | chpasswd
+
+# 🛡️ Sudo für Benutzer aktivieren
+sed -i 's/^# %wheel/%wheel/' /etc/sudoers
+
+# ⚙️ Wichtige Dienste aktivieren
+systemctl enable NetworkManager   # Netzwerkverwaltung
+systemctl enable tlp              # Stromspar-Tool
+systemctl enable acpid            # ACPI-Ereignisse (z. B. Deckel schließen)
+
+# 🧰 GRUB Bootloader installieren und konfigurieren
+grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
+grub-mkconfig -o /boot/grub/grub.cfg
+
 EOF
 
-# 🐚 Installiere Zsh + Oh My Zsh
-echo "🐚 Installiere Zsh und Oh My Zsh..."
-sudo pacman -S --noconfirm zsh
-sudo -u "$USERNAME" bash <<EOF
-chsh -s /bin/zsh
-sh -c "\$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-EOF
-
-# 📁 Erstelle Standardordner für Benutzer (Dokumente, Downloads etc.)
-echo "📁 Erstelle Standardordner..."
-sudo -u "$USERNAME" xdg-user-dirs-update
-
-# 🔋 Laptop-spezifische Stromsparpakete installieren
-echo "🔋 Installiere Laptop-Tweaks..."
-sudo pacman -S --noconfirm tlp powertop acpi acpid thermald xf86-input-libinput
-sudo systemctl enable tlp
-sudo systemctl enable acpid
-sudo systemctl enable thermald
-
-# 🛡️ Aktiviere Firewall mit UFW
-echo "🛡️ Aktiviere Firewall..."
-sudo pacman -S --noconfirm ufw
-sudo systemctl enable ufw
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-sudo ufw enable
-
-# 🖥️ Hyprland-Konfiguration vorbereiten (wenn keine Dotfiles vorhanden)
-echo "🖥️ Erstelle einfache Hyprland-Konfiguration..."
-sudo -u "$USERNAME" bash <<EOF
-mkdir -p ~/.config/hypr
-cat > ~/.config/hypr/hyprland.conf <<HCONF
-monitor=,preferred,auto,auto
-exec-once = waybar
-exec-once = wofi --show drun
-exec-once = alacritty
-HCONF
-EOF
-
-# 🛠️ Dotfiles klonen (optional, wenn du später ein Repo hast)
-# echo "🛠️ Klone Dotfiles..."
-# sudo -u "$USERNAME" bash <<EOF
-# cd ~
-# git clone "$DOTFILES_REPO" dotfiles
-# cd dotfiles
-# ./install.sh || echo "⚠️ Dotfiles-Skript nicht gefunden oder fehlgeschlagen"
-# EOF
-
-echo "✅ Post-Install abgeschlossen!"
+# ✅ Abschlussmeldung
+echo "✅ Laptop-Installation abgeschlossen!"
