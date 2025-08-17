@@ -15,3 +15,8 @@ curl -L https://raw.githubusercontent.com/USERNAME/REPO/main/bootstrap.sh -o boo
 chmod +x bootstrap.sh
 ./bootstrap.sh
 ```
+
+
+```
+curl -L https://raw.githubusercontent.com/USERNAME/REPO/main/dual_arch_installer.sh | bash
+``
